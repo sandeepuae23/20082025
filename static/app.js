@@ -8992,7 +8992,7 @@ async function loadIndicesForUpdate(envId, selected) {
     const indexSelect = document.getElementById('updateIndexSelect');
     indexSelect.innerHTML = '<option value="">Select index...</option>';
     // Clear field selects until an index is chosen
-    ['updateParentChildFields', 'updateNestedFields', 'updateAIFields'].forEach(id => {
+    ['updateRootFields', 'updateParentChildFields', 'updateNestedFields', 'updateAIFields'].forEach(id => {
         const sel = document.getElementById(id);
         if (sel) sel.innerHTML = '';
     });
@@ -9041,8 +9041,8 @@ async function loadUpdateMappingFields(envId, indexName) {
             if (data.mapping.mappings?.properties) {
                 props = data.mapping.mappings.properties;
             } else {
-                const mappingKey = Object.keys(data.mapping)[0];
-                props = data.mapping[mappingKey]?.mappings?.properties || null;
+                const mapping = data.mapping[indexName] || Object.values(data.mapping)[0];
+                props = mapping?.mappings?.properties || null;
             }
         }
 
