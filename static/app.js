@@ -9034,9 +9034,22 @@ async function loadUpdateMappingFields(envId, indexName) {
     try {
         const res = await fetch(`/mapping/${envId}/${indexName}`);
         const data = await res.json();
-        const mappingKey = data.mapping ? Object.keys(data.mapping)[0] : null;
-        const props = mappingKey ? data.mapping[mappingKey]?.mappings?.properties : null;
-        if (!props) return;
+
+        // Support both `{index: {mappings:{properties}}}` and `{mappings:{properties}}` formats
+        let props = null;
+        if (data.mapping) {
+            if (data.mapping.mappings?.properties) {
+                props = data.mapping.mappings.properties;
+            } else {
+                const mappingKey = Object.keys(data.mapping)[0];
+                props = data.mapping[mappingKey]?.mappings?.properties || null;
+            }
+        }
+
+        if (!props) {
+            console.warn('No properties found in mapping response');
+            return;
+        }
 
         const fields = extractFieldsFromMapping({ properties: props });
         const names = fields.map(f => f.name);
