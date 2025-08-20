@@ -9019,11 +9019,16 @@ async function loadIndicesForUpdate(envId, selected) {
 }
 
 async function loadUpdateMappingFields(envId, indexName) {
+    const rootSelect = document.getElementById('updateRootFields');
     const parentSelect = document.getElementById('updateParentChildFields');
     const nestedSelect = document.getElementById('updateNestedFields');
     const aiSelect = document.getElementById('updateAIFields');
+    const relationGroup = document.getElementById('updateRelationsGroup');
+    const relationSelect = document.getElementById('updateRelations');
 
-    [parentSelect, nestedSelect, aiSelect].forEach(sel => sel.innerHTML = '');
+    [rootSelect, parentSelect, nestedSelect, aiSelect].forEach(sel => sel.innerHTML = '');
+    relationSelect.innerHTML = '';
+    relationGroup.style.display = 'none';
     if (!envId || !indexName) return;
 
     try {
@@ -9035,13 +9040,16 @@ async function loadUpdateMappingFields(envId, indexName) {
 
         const fields = extractFieldsFromMapping({ properties: props });
         const names = fields.map(f => f.name);
+        const rootNames = names.filter(n => !n.includes('.'));
+        const joinFields = fields.filter(f => f.originalConfig.type === 'join');
 
+        const preRoot = mappingFields.filter(f => f.section === 'root').map(f => f.field_name);
         const preParent = mappingFields.filter(f => f.section === 'parent-child').map(f => f.field_name);
         const preNested = mappingFields.filter(f => f.section === 'nested').map(f => f.field_name);
         const preAI = mappingFields.filter(f => f.section === 'ai' || f.section === 'vector').map(f => f.field_name);
 
-        const populate = (select, selected) => {
-            names.forEach(n => {
+        const populate = (select, list, selected=[]) => {
+            list.forEach(n => {
                 const opt = document.createElement('option');
                 opt.value = n;
                 opt.textContent = n;
@@ -9050,9 +9058,21 @@ async function loadUpdateMappingFields(envId, indexName) {
             });
         };
 
-        populate(parentSelect, preParent);
-        populate(nestedSelect, preNested);
-        populate(aiSelect, preAI);
+        populate(rootSelect, rootNames, preRoot);
+        populate(parentSelect, names, preParent);
+        populate(nestedSelect, names, preNested);
+        populate(aiSelect, names, preAI);
+
+        if (joinFields.length > 0) {
+            relationGroup.style.display = 'block';
+            const relations = joinFields[0].originalConfig.relations || {};
+            Object.entries(relations).forEach(([parent, child]) => {
+                const opt = document.createElement('option');
+                opt.value = `${parent}:${child}`;
+                opt.textContent = `${parent} → ${child}`;
+                relationSelect.appendChild(opt);
+            });
+        }
     } catch (err) {
         console.error('Error loading mapping fields', err);
         showAlert('Error loading mapping fields', 'danger');
@@ -9084,6 +9104,7 @@ window.showUpdateMappingModal = showUpdateMappingModal;
 async function saveMappingUpdate() {
     const envId = document.getElementById('updateEnvSelect').value;
     const index = document.getElementById('updateIndexSelect').value;
+    const rootFields = Array.from(document.getElementById('updateRootFields').selectedOptions).map(o => o.value);
     const parentFields = Array.from(document.getElementById('updateParentChildFields').selectedOptions).map(o => o.value);
     const nestedFields = Array.from(document.getElementById('updateNestedFields').selectedOptions).map(o => o.value);
     const aiFields = Array.from(document.getElementById('updateAIFields').selectedOptions).map(o => o.value);
@@ -9100,6 +9121,7 @@ async function saveMappingUpdate() {
             body: JSON.stringify({
                 env_id: parseInt(envId),
                 index_name: index,
+                root_fields: rootFields,
                 parent_child_fields: parentFields,
                 nested_fields: nestedFields,
                 ai_fields: aiFields
@@ -9107,6 +9129,19 @@ async function saveMappingUpdate() {
         });
         const data = await response.json();
         if (data.success) {
+            const rootSet = new Set(rootFields);
+            const parentSet = new Set(parentFields);
+            const nestedSet = new Set(nestedFields);
+            const aiSet = new Set(aiFields);
+
+            mappingFields.forEach(f => {
+                if (parentSet.has(f.field_name)) f.section = 'parent-child';
+                else if (nestedSet.has(f.field_name)) f.section = 'nested';
+                else if (aiSet.has(f.field_name)) f.section = 'ai';
+                else if (rootSet.has(f.field_name)) f.section = 'root';
+            });
+
+            updateMappingBuilderDisplay();
             showAlert('Mapping update saved successfully!', 'success');
             bootstrap.Modal.getInstance(document.getElementById('updateMappingModal')).hide();
         } else {
