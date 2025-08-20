@@ -1177,6 +1177,9 @@ function handleMappingEnvironmentChange() {
     const columnsCard = document.getElementById('columnsCard');
     if (loadColumnsBtn) loadColumnsBtn.disabled = true;
     if (columnsCard) columnsCard.style.display = 'none';
+
+    // Clear mapping config details when environment changes
+    loadMappingConfigDetails(null, null);
 }
 
 
@@ -1274,6 +1277,13 @@ function handleMappingIndexChange() {
         const indexName = indexSelect.value;
         loadColumnsBtn.disabled = !indexName;
         console.log('Index changed to:', indexName, 'Load button disabled:', !indexName);
+        const envValue = document.getElementById('mappingEnvironment').value;
+        if (envValue && envValue.startsWith('elasticsearch-') && indexName) {
+            const envId = envValue.split('-')[1];
+            loadMappingConfigDetails(envId, indexName);
+        } else {
+            loadMappingConfigDetails(null, null);
+        }
     } else {
         console.error('Elements not found:', { indexSelect: !!indexSelect, loadColumnsBtn: !!loadColumnsBtn });
     }
@@ -9133,6 +9143,36 @@ async function loadUpdateMappingFields(envId, indexName) {
     updateMappingBuilderDisplay();
 }
 
+async function loadMappingConfigDetails(envId, indexName) {
+    const tbody = document.querySelector('#mappingConfigTable tbody');
+    if (!tbody) return;
+
+    if (!envId || !indexName) {
+        tbody.innerHTML = '<tr><td class="text-muted">Select an environment and index to see mapping config</td></tr>';
+        return;
+    }
+
+    try {
+        const res = await fetch(`/mapping-update/${envId}/${indexName}`);
+        if (!res.ok) throw new Error('Request failed');
+        const data = await res.json();
+        const root = (data.root_fields || []).join(', ') || '-';
+        const nested = (data.nested_fields || []).join(', ') || '-';
+        const relation = data.parent_child_relation || '-';
+        const parent = (data.parent_child_fields || []).join(', ') || '-';
+        const ai = (data.ai_fields || []).join(', ') || '-';
+        tbody.innerHTML = `
+            <tr><th>Root Fields</th><td>${root}</td></tr>
+            <tr><th>Nested Fields</th><td>${nested}</td></tr>
+            <tr><th>Parent-Child Relation</th><td>${relation}</td></tr>
+            <tr><th>Parent-Child Fields</th><td>${parent}</td></tr>
+            <tr><th>AI Fields</th><td>${ai}</td></tr>
+        `;
+    } catch (e) {
+        tbody.innerHTML = '<tr><td class="text-muted">No mapping config saved</td></tr>';
+    }
+}
+
 function showUpdateMappingModal() {
     const envSelect = document.getElementById('updateEnvSelect');
     const indexSelect = document.getElementById('updateIndexSelect');
@@ -9213,6 +9253,7 @@ async function saveMappingUpdate() {
             aiFields.forEach(n => ensureField(n, 'ai'));
 
             updateMappingBuilderDisplay();
+            loadMappingConfigDetails(envId, index);
             showAlert('Mapping update saved successfully!', 'success');
             bootstrap.Modal.getInstance(document.getElementById('updateMappingModal')).hide();
         } else {
