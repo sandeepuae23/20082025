@@ -4,6 +4,7 @@ let currentConnection = null;
 let currentColumns = [];
 let mappingFields = [];
 let indexFieldMap = {};
+let selectedParentChildRelation = '';
 let analysisSettings = { analyzer: {} };
 const similarityDefinitions = {
     my_bm25: {
@@ -4396,6 +4397,14 @@ function updateMappingBuilderDisplay() {
             section.innerHTML = '';
         }
     });
+
+    if (parentChildSection && selectedParentChildRelation) {
+        const relDiv = document.createElement('div');
+        relDiv.className = 'relation-item alert alert-info py-1 px-2 mb-2';
+        const parts = selectedParentChildRelation.split(':');
+        relDiv.textContent = `Relation: ${parts[0]} → ${parts[1]}`;
+        parentChildSection.appendChild(relDiv);
+    }
 
     // Populate sections
     mappingFields.forEach(field => {
@@ -9047,6 +9056,7 @@ async function loadUpdateMappingFields(envId, indexName) {
     const preNested = savedData.nested_fields || [];
     const preAI = savedData.ai_fields || [];
     const selectedRelation = savedData.parent_child_relation || '';
+    selectedParentChildRelation = selectedRelation;
 
     try {
         const res = await fetch(`/mapping/${envId}/${indexName}`);
@@ -9073,11 +9083,24 @@ async function loadUpdateMappingFields(envId, indexName) {
         fields.forEach(f => { indexFieldMap[f.name] = f.type; });
         const names = fields.map(f => f.name);
         const rootNames = names.filter(n => !n.includes('.'));
-        const nestedNames = fields.filter(f => f.originalConfig.type === 'nested').map(f => f.name);
+        const nestedParentSet = new Set(fields.filter(f => f.originalConfig.type === 'nested').map(f => f.name));
+        const nestedNameSet = new Set([...nestedParentSet]);
+        fields.forEach(f => {
+            const parts = f.name.split('.');
+            for (let i = 1; i < parts.length; i++) {
+                const prefix = parts.slice(0, i).join('.');
+                if (nestedParentSet.has(prefix)) {
+                    nestedNameSet.add(f.name);
+                    break;
+                }
+            }
+        });
+        const nestedNames = Array.from(new Set([...nestedNameSet, ...preNested]));
         const joinFields = fields.filter(f => f.originalConfig.type === 'join');
 
         const populate = (select, list, selected=[]) => {
-            list.forEach(n => {
+            const options = Array.from(new Set([...list, ...selected]));
+            options.forEach(n => {
                 const opt = document.createElement('option');
                 opt.value = n;
                 opt.textContent = n;
@@ -9107,6 +9130,7 @@ async function loadUpdateMappingFields(envId, indexName) {
         console.error('Error loading mapping fields', err);
         showAlert('Error loading mapping fields', 'danger');
     }
+    updateMappingBuilderDisplay();
 }
 
 function showUpdateMappingModal() {
@@ -9182,7 +9206,7 @@ async function saveMappingUpdate() {
                 }
                 field.section = section;
             };
-
+            selectedParentChildRelation = relation || '';
             rootFields.forEach(n => ensureField(n, 'root'));
             parentFields.forEach(n => ensureField(n, 'parent-child'));
             nestedFields.forEach(n => ensureField(n, 'nested'));
