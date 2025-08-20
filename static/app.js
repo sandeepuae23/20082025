@@ -3,6 +3,7 @@ let environments = [];
 let currentConnection = null;
 let currentColumns = [];
 let mappingFields = [];
+let indexFieldMap = {};
 let analysisSettings = { analyzer: {} };
 const similarityDefinitions = {
     my_bm25: {
@@ -9068,8 +9069,11 @@ async function loadUpdateMappingFields(envId, indexName) {
         }
 
         const fields = extractFieldsFromMapping({ properties: props });
+        indexFieldMap = {};
+        fields.forEach(f => { indexFieldMap[f.name] = f.type; });
         const names = fields.map(f => f.name);
         const rootNames = names.filter(n => !n.includes('.'));
+        const nestedNames = fields.filter(f => f.originalConfig.type === 'nested').map(f => f.name);
         const joinFields = fields.filter(f => f.originalConfig.type === 'join');
 
         const populate = (select, list, selected=[]) => {
@@ -9084,7 +9088,7 @@ async function loadUpdateMappingFields(envId, indexName) {
 
         populate(rootSelect, rootNames, preRoot);
         populate(parentSelect, names, preParent);
-        populate(nestedSelect, names, preNested);
+        populate(nestedSelect, nestedNames, preNested);
         populate(aiSelect, names, preAI);
 
         if (joinFields.length > 0) {
@@ -9157,17 +9161,32 @@ async function saveMappingUpdate() {
         });
         const data = await response.json();
         if (data.success) {
-            const rootSet = new Set(rootFields);
-            const parentSet = new Set(parentFields);
-            const nestedSet = new Set(nestedFields);
-            const aiSet = new Set(aiFields);
+            const ensureField = (name, section) => {
+                let field = mappingFields.find(f => f.field_name === name);
+                if (!field) {
+                    field = {
+                        field_name: name,
+                        field_type: indexFieldMap[name] || 'text',
+                        oracle_type: null,
+                        elastic_type: indexFieldMap[name] || 'text',
+                        ui_component_type: 'text_box',
+                        is_nested: false,
+                        parent_field: null,
+                        properties: {},
+                        source_index: null,
+                        key_field: null,
+                        value_field: null,
+                        nested_fields: []
+                    };
+                    mappingFields.push(field);
+                }
+                field.section = section;
+            };
 
-            mappingFields.forEach(f => {
-                if (parentSet.has(f.field_name)) f.section = 'parent-child';
-                else if (nestedSet.has(f.field_name)) f.section = 'nested';
-                else if (aiSet.has(f.field_name)) f.section = 'ai';
-                else if (rootSet.has(f.field_name)) f.section = 'root';
-            });
+            rootFields.forEach(n => ensureField(n, 'root'));
+            parentFields.forEach(n => ensureField(n, 'parent-child'));
+            nestedFields.forEach(n => ensureField(n, 'nested'));
+            aiFields.forEach(n => ensureField(n, 'ai'));
 
             updateMappingBuilderDisplay();
             showAlert('Mapping update saved successfully!', 'success');
