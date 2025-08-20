@@ -3,6 +3,8 @@ let environments = [];
 let currentConnection = null;
 let currentColumns = [];
 let mappingFields = [];
+let indexFieldMap = {};
+let selectedParentChildRelation = '';
 let analysisSettings = { analyzer: {} };
 const similarityDefinitions = {
     my_bm25: {
@@ -1175,6 +1177,9 @@ function handleMappingEnvironmentChange() {
     const columnsCard = document.getElementById('columnsCard');
     if (loadColumnsBtn) loadColumnsBtn.disabled = true;
     if (columnsCard) columnsCard.style.display = 'none';
+
+    // Clear mapping config details when environment changes
+    loadMappingConfigDetails(null, null);
 }
 
 
@@ -1272,6 +1277,13 @@ function handleMappingIndexChange() {
         const indexName = indexSelect.value;
         loadColumnsBtn.disabled = !indexName;
         console.log('Index changed to:', indexName, 'Load button disabled:', !indexName);
+        const envValue = document.getElementById('mappingEnvironment').value;
+        if (envValue && envValue.startsWith('elasticsearch-') && indexName) {
+            const envId = envValue.split('-')[1];
+            loadMappingConfigDetails(envId, indexName);
+        } else {
+            loadMappingConfigDetails(null, null);
+        }
     } else {
         console.error('Elements not found:', { indexSelect: !!indexSelect, loadColumnsBtn: !!loadColumnsBtn });
     }
@@ -4395,6 +4407,14 @@ function updateMappingBuilderDisplay() {
             section.innerHTML = '';
         }
     });
+
+    if (parentChildSection && selectedParentChildRelation) {
+        const relDiv = document.createElement('div');
+        relDiv.className = 'relation-item alert alert-info py-1 px-2 mb-2';
+        const parts = selectedParentChildRelation.split(':');
+        relDiv.textContent = `Relation: ${parts[0]} → ${parts[1]}`;
+        parentChildSection.appendChild(relDiv);
+    }
 
     // Populate sections
     mappingFields.forEach(field => {
@@ -8992,7 +9012,7 @@ async function loadIndicesForUpdate(envId, selected) {
     const indexSelect = document.getElementById('updateIndexSelect');
     indexSelect.innerHTML = '<option value="">Select index...</option>';
     // Clear field selects until an index is chosen
-    ['updateParentChildFields', 'updateNestedFields', 'updateAIFields'].forEach(id => {
+    ['updateRootFields', 'updateParentChildFields', 'updateNestedFields', 'updateAIFields'].forEach(id => {
         const sel = document.getElementById(id);
         if (sel) sel.innerHTML = '';
     });
@@ -9019,29 +9039,78 @@ async function loadIndicesForUpdate(envId, selected) {
 }
 
 async function loadUpdateMappingFields(envId, indexName) {
+    const rootSelect = document.getElementById('updateRootFields');
     const parentSelect = document.getElementById('updateParentChildFields');
     const nestedSelect = document.getElementById('updateNestedFields');
     const aiSelect = document.getElementById('updateAIFields');
+    const relationGroup = document.getElementById('updateRelationsGroup');
+    const relationSelect = document.getElementById('updateRelations');
 
-    [parentSelect, nestedSelect, aiSelect].forEach(sel => sel.innerHTML = '');
+    [rootSelect, parentSelect, nestedSelect, aiSelect].forEach(sel => sel.innerHTML = '');
+    relationSelect.innerHTML = '';
+    relationGroup.style.display = 'none';
     if (!envId || !indexName) return;
+
+    let savedData = {};
+    try {
+        const savedRes = await fetch(`/mapping-update/${envId}/${indexName}`);
+        if (savedRes.ok) {
+            savedData = await savedRes.json();
+        }
+    } catch (e) {
+        console.warn('No existing mapping update', e);
+    }
+
+    const preRoot = savedData.root_fields || [];
+    const preParent = savedData.parent_child_fields || [];
+    const preNested = savedData.nested_fields || [];
+    const preAI = savedData.ai_fields || [];
+    const selectedRelation = savedData.parent_child_relation || '';
+    selectedParentChildRelation = selectedRelation;
 
     try {
         const res = await fetch(`/mapping/${envId}/${indexName}`);
         const data = await res.json();
-        const mappingKey = data.mapping ? Object.keys(data.mapping)[0] : null;
-        const props = mappingKey ? data.mapping[mappingKey]?.mappings?.properties : null;
-        if (!props) return;
+
+        // Support both `{index: {mappings:{properties}}}` and `{mappings:{properties}}` formats
+        let props = null;
+        if (data.mapping) {
+            if (data.mapping.mappings?.properties) {
+                props = data.mapping.mappings.properties;
+            } else {
+                const mapping = data.mapping[indexName] || Object.values(data.mapping)[0];
+                props = mapping?.mappings?.properties || null;
+            }
+        }
+
+        if (!props) {
+            console.warn('No properties found in mapping response');
+            return;
+        }
 
         const fields = extractFieldsFromMapping({ properties: props });
+        indexFieldMap = {};
+        fields.forEach(f => { indexFieldMap[f.name] = f.type; });
         const names = fields.map(f => f.name);
+        const rootNames = names.filter(n => !n.includes('.'));
+        const nestedParentSet = new Set(fields.filter(f => f.originalConfig.type === 'nested').map(f => f.name));
+        const nestedNameSet = new Set([...nestedParentSet]);
+        fields.forEach(f => {
+            const parts = f.name.split('.');
+            for (let i = 1; i < parts.length; i++) {
+                const prefix = parts.slice(0, i).join('.');
+                if (nestedParentSet.has(prefix)) {
+                    nestedNameSet.add(f.name);
+                    break;
+                }
+            }
+        });
+        const nestedNames = Array.from(new Set([...nestedNameSet, ...preNested]));
+        const joinFields = fields.filter(f => f.originalConfig.type === 'join');
 
-        const preParent = mappingFields.filter(f => f.section === 'parent-child').map(f => f.field_name);
-        const preNested = mappingFields.filter(f => f.section === 'nested').map(f => f.field_name);
-        const preAI = mappingFields.filter(f => f.section === 'ai' || f.section === 'vector').map(f => f.field_name);
-
-        const populate = (select, selected) => {
-            names.forEach(n => {
+        const populate = (select, list, selected=[]) => {
+            const options = Array.from(new Set([...list, ...selected]));
+            options.forEach(n => {
                 const opt = document.createElement('option');
                 opt.value = n;
                 opt.textContent = n;
@@ -9050,14 +9119,86 @@ async function loadUpdateMappingFields(envId, indexName) {
             });
         };
 
-        populate(parentSelect, preParent);
-        populate(nestedSelect, preNested);
-        populate(aiSelect, preAI);
+        populate(rootSelect, rootNames, preRoot);
+        populate(parentSelect, names, preParent);
+        populate(nestedSelect, nestedNames, preNested);
+        populate(aiSelect, names, preAI);
+
+        if (joinFields.length > 0) {
+            relationGroup.style.display = 'block';
+            const relations = joinFields[0].originalConfig.relations || {};
+            Object.entries(relations).forEach(([parent, child]) => {
+                const opt = document.createElement('option');
+                const value = `${parent}:${child}`;
+                opt.value = value;
+                opt.textContent = `${parent} → ${child}`;
+                if (value === selectedRelation) opt.selected = true;
+                relationSelect.appendChild(opt);
+            });
+        }
     } catch (err) {
         console.error('Error loading mapping fields', err);
         showAlert('Error loading mapping fields', 'danger');
     }
+    updateMappingBuilderDisplay();
 }
+
+async function loadMappingConfigDetails(envId, indexName) {
+    const tbody = document.querySelector('#mappingConfigTable tbody');
+    if (!tbody) return;
+
+    if (!envId || !indexName) {
+        tbody.innerHTML = '<tr><td class="text-muted">Select an environment and index to see mapping config</td></tr>';
+        return;
+    }
+
+    try {
+        const res = await fetch(`/mapping-update/${envId}/${indexName}`);
+        if (!res.ok) throw new Error('Request failed');
+        const data = await res.json();
+        const root = (data.root_fields || []).join(', ') || '-';
+        const nested = (data.nested_fields || []).join(', ') || '-';
+        const relation = data.parent_child_relation || '-';
+        const parent = (data.parent_child_fields || []).join(', ') || '-';
+        const ai = (data.ai_fields || []).join(', ') || '-';
+        tbody.innerHTML = `
+            <tr><th>Root Fields</th><td>${root}</td></tr>
+            <tr><th>Nested Fields</th><td>${nested}</td></tr>
+            <tr><th>Parent-Child Relation</th><td>${relation}</td></tr>
+            <tr><th>Parent-Child Fields</th><td>${parent}</td></tr>
+            <tr><th>AI Fields</th><td>${ai}</td></tr>
+        `;
+    } catch (e) {
+        tbody.innerHTML = '<tr><td class="text-muted">No mapping config saved</td></tr>';
+    }
+}
+
+function previewMappingUpdate() {
+    const rootFields = Array.from(document.getElementById('updateRootFields').selectedOptions).map(o => o.value);
+    const parentFields = Array.from(document.getElementById('updateParentChildFields').selectedOptions).map(o => o.value);
+    const nestedFields = Array.from(document.getElementById('updateNestedFields').selectedOptions).map(o => o.value);
+    const aiFields = Array.from(document.getElementById('updateAIFields').selectedOptions).map(o => o.value);
+    const relation = document.getElementById('updateRelations').value;
+
+    const root = rootFields.length ? rootFields.join(', ') : '-';
+    const nested = nestedFields.length ? nestedFields.join(', ') : '-';
+    const relationText = relation || '-';
+    const parent = parentFields.length ? parentFields.join(', ') : '-';
+    const ai = aiFields.length ? aiFields.join(', ') : '-';
+    const rows = `
+        <tr><th>Root Fields</th><td>${root}</td></tr>
+        <tr><th>Nested Fields</th><td>${nested}</td></tr>
+        <tr><th>Parent-Child Relation</th><td>${relationText}</td></tr>
+        <tr><th>Parent-Child Fields</th><td>${parent}</td></tr>
+        <tr><th>AI Fields</th><td>${ai}</td></tr>
+    `;
+    const modalTbody = document.querySelector('#updateMappingPreview tbody');
+    if (modalTbody) modalTbody.innerHTML = rows;
+    const pageTbody = document.querySelector('#mappingConfigTable tbody');
+    if (pageTbody) pageTbody.innerHTML = rows;
+}
+
+window.previewMappingUpdate = previewMappingUpdate;
 
 function showUpdateMappingModal() {
     const envSelect = document.getElementById('updateEnvSelect');
@@ -9084,9 +9225,11 @@ window.showUpdateMappingModal = showUpdateMappingModal;
 async function saveMappingUpdate() {
     const envId = document.getElementById('updateEnvSelect').value;
     const index = document.getElementById('updateIndexSelect').value;
+    const rootFields = Array.from(document.getElementById('updateRootFields').selectedOptions).map(o => o.value);
     const parentFields = Array.from(document.getElementById('updateParentChildFields').selectedOptions).map(o => o.value);
     const nestedFields = Array.from(document.getElementById('updateNestedFields').selectedOptions).map(o => o.value);
     const aiFields = Array.from(document.getElementById('updateAIFields').selectedOptions).map(o => o.value);
+    const relation = document.getElementById('updateRelations').value;
 
     if (!envId || !index) {
         showAlert('Please select an environment and index', 'warning');
@@ -9100,13 +9243,44 @@ async function saveMappingUpdate() {
             body: JSON.stringify({
                 env_id: parseInt(envId),
                 index_name: index,
+                root_fields: rootFields,
                 parent_child_fields: parentFields,
+                parent_child_relation: relation || null,
                 nested_fields: nestedFields,
                 ai_fields: aiFields
             })
         });
         const data = await response.json();
         if (data.success) {
+            const ensureField = (name, section) => {
+                let field = mappingFields.find(f => f.field_name === name);
+                if (!field) {
+                    field = {
+                        field_name: name,
+                        field_type: indexFieldMap[name] || 'text',
+                        oracle_type: null,
+                        elastic_type: indexFieldMap[name] || 'text',
+                        ui_component_type: 'text_box',
+                        is_nested: false,
+                        parent_field: null,
+                        properties: {},
+                        source_index: null,
+                        key_field: null,
+                        value_field: null,
+                        nested_fields: []
+                    };
+                    mappingFields.push(field);
+                }
+                field.section = section;
+            };
+            selectedParentChildRelation = relation || '';
+            rootFields.forEach(n => ensureField(n, 'root'));
+            parentFields.forEach(n => ensureField(n, 'parent-child'));
+            nestedFields.forEach(n => ensureField(n, 'nested'));
+            aiFields.forEach(n => ensureField(n, 'ai'));
+
+            updateMappingBuilderDisplay();
+            loadMappingConfigDetails(envId, index);
             showAlert('Mapping update saved successfully!', 'success');
             bootstrap.Modal.getInstance(document.getElementById('updateMappingModal')).hide();
         } else {

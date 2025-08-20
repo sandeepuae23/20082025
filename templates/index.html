@@ -1794,13 +1794,26 @@
                                         <i class="fas fa-layer-group fa-2x mb-2"></i>
                                         <p>Drag nested fields here</p>
                                     </div>
-                                    <div id="aiFieldsContainer">
+                                <div id="aiFieldsContainer">
                                         <!-- AI-generated fields will appear here -->
                                     </div>
                                 </div>
 
 
                             </div>
+                        </div>
+                    </div>
+
+                    <div class="card mt-3" id="mappingConfigCard">
+                        <div class="card-header">
+                            <h6 class="mb-0"><i class="fas fa-table me-2"></i>Mapping Config Details</h6>
+                        </div>
+                        <div class="card-body">
+                            <table class="table table-sm mb-0" id="mappingConfigTable">
+                                <tbody>
+                                    <tr><td class="text-muted">Select an environment and index to see mapping config</td></tr>
+                                </tbody>
+                            </table>
                         </div>
                     </div>
 
@@ -3263,8 +3276,16 @@
                     <select id="updateIndexSelect" class="form-select"></select>
                 </div>
                 <div class="mb-3">
+                    <label class="form-label">Root Fields</label>
+                    <select id="updateRootFields" class="form-select" multiple></select>
+                </div>
+                <div class="mb-3">
                     <label class="form-label">Parent-Child Fields</label>
                     <select id="updateParentChildFields" class="form-select" multiple></select>
+                </div>
+                <div class="mb-3" id="updateRelationsGroup" style="display:none;">
+                    <label class="form-label">Parent-Child Relations</label>
+                    <select id="updateRelations" class="form-select"></select>
                 </div>
                 <div class="mb-3">
                     <label class="form-label">Nested Fields</label>
@@ -3274,8 +3295,17 @@
                     <label class="form-label">AI Fields</label>
                     <select id="updateAIFields" class="form-select" multiple></select>
                 </div>
+                <div class="mb-3">
+                    <label class="form-label">Selection Preview</label>
+                    <table class="table table-sm mb-0" id="updateMappingPreview">
+                        <tbody>
+                            <tr><td class="text-muted">Click View to preview selections</td></tr>
+                        </tbody>
+                    </table>
+                </div>
             </div>
             <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="previewMappingUpdate()">View</button>
                 <button type="button" class="btn btn-primary" onclick="saveMappingUpdate()">Save</button>
             </div>
         </div>
