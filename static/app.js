@@ -9031,6 +9031,22 @@ async function loadUpdateMappingFields(envId, indexName) {
     relationGroup.style.display = 'none';
     if (!envId || !indexName) return;
 
+    let savedData = {};
+    try {
+        const savedRes = await fetch(`/mapping-update/${envId}/${indexName}`);
+        if (savedRes.ok) {
+            savedData = await savedRes.json();
+        }
+    } catch (e) {
+        console.warn('No existing mapping update', e);
+    }
+
+    const preRoot = savedData.root_fields || [];
+    const preParent = savedData.parent_child_fields || [];
+    const preNested = savedData.nested_fields || [];
+    const preAI = savedData.ai_fields || [];
+    const selectedRelation = savedData.parent_child_relation || '';
+
     try {
         const res = await fetch(`/mapping/${envId}/${indexName}`);
         const data = await res.json();
@@ -9056,11 +9072,6 @@ async function loadUpdateMappingFields(envId, indexName) {
         const rootNames = names.filter(n => !n.includes('.'));
         const joinFields = fields.filter(f => f.originalConfig.type === 'join');
 
-        const preRoot = mappingFields.filter(f => f.section === 'root').map(f => f.field_name);
-        const preParent = mappingFields.filter(f => f.section === 'parent-child').map(f => f.field_name);
-        const preNested = mappingFields.filter(f => f.section === 'nested').map(f => f.field_name);
-        const preAI = mappingFields.filter(f => f.section === 'ai' || f.section === 'vector').map(f => f.field_name);
-
         const populate = (select, list, selected=[]) => {
             list.forEach(n => {
                 const opt = document.createElement('option');
@@ -9081,8 +9092,10 @@ async function loadUpdateMappingFields(envId, indexName) {
             const relations = joinFields[0].originalConfig.relations || {};
             Object.entries(relations).forEach(([parent, child]) => {
                 const opt = document.createElement('option');
-                opt.value = `${parent}:${child}`;
+                const value = `${parent}:${child}`;
+                opt.value = value;
                 opt.textContent = `${parent} → ${child}`;
+                if (value === selectedRelation) opt.selected = true;
                 relationSelect.appendChild(opt);
             });
         }
@@ -9121,6 +9134,7 @@ async function saveMappingUpdate() {
     const parentFields = Array.from(document.getElementById('updateParentChildFields').selectedOptions).map(o => o.value);
     const nestedFields = Array.from(document.getElementById('updateNestedFields').selectedOptions).map(o => o.value);
     const aiFields = Array.from(document.getElementById('updateAIFields').selectedOptions).map(o => o.value);
+    const relation = document.getElementById('updateRelations').value;
 
     if (!envId || !index) {
         showAlert('Please select an environment and index', 'warning');
@@ -9136,6 +9150,7 @@ async function saveMappingUpdate() {
                 index_name: index,
                 root_fields: rootFields,
                 parent_child_fields: parentFields,
+                parent_child_relation: relation || null,
                 nested_fields: nestedFields,
                 ai_fields: aiFields
             })

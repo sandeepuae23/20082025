@@ -137,6 +137,7 @@ class MappingUpdate(BaseModel):
     index_name: str
     root_fields: List[str] = Field(default_factory=list)
     parent_child_fields: List[str] = Field(default_factory=list)
+    parent_child_relation: Optional[str] = None
     nested_fields: List[str] = Field(default_factory=list)
     ai_fields: List[str] = Field(default_factory=list)
 
@@ -2719,7 +2720,7 @@ def build_enhanced_elasticsearch_query(fields: Dict[str, Any], form_config: Dict
     print(queryv2)
     print("*******************************************************###########")
 
-    root_field_list, inner_field_list, nested_field_list, _ = fetch_field_lists(form_config.get("environment"), form_config.get("index_name"))
+    root_field_list, inner_field_list, _, nested_field_list, _ = fetch_field_lists(form_config.get("environment"), form_config.get("index_name"))
     print(inner_field_list)
     print("......")
     if inner_field_list is not None and len(inner_field_list) > 0:
@@ -4272,6 +4273,7 @@ def init_workflow_mappings_db():
                        index_name TEXT NOT NULL,
                        root_fields TEXT,
                        parent_child_fields TEXT,
+                       parent_child_relation TEXT,
                        nested_fields TEXT,
                        ai_fields TEXT,
                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -4289,6 +4291,8 @@ def init_workflow_mappings_db():
         )
     if 'root_fields' not in columns:
         cursor.execute("ALTER TABLE mapping_updates ADD COLUMN root_fields TEXT")
+    if 'parent_child_relation' not in columns:
+        cursor.execute("ALTER TABLE mapping_updates ADD COLUMN parent_child_relation TEXT")
 
     conn.commit()
     conn.close()
@@ -4480,11 +4484,12 @@ async def save_mapping_update(update: MappingUpdate):
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO mapping_updates (
-                    env_id, index_name, root_fields, parent_child_fields, nested_fields, ai_fields, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    env_id, index_name, root_fields, parent_child_fields, parent_child_relation, nested_fields, ai_fields, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(env_id, index_name) DO UPDATE SET
                     root_fields=excluded.root_fields,
                     parent_child_fields=excluded.parent_child_fields,
+                    parent_child_relation=excluded.parent_child_relation,
                     nested_fields=excluded.nested_fields,
                     ai_fields=excluded.ai_fields,
                     created_at=excluded.created_at
@@ -4493,6 +4498,7 @@ async def save_mapping_update(update: MappingUpdate):
                 update.index_name,
                 json.dumps(update.root_fields),
                 json.dumps(update.parent_child_fields),
+                update.parent_child_relation,
                 json.dumps(update.nested_fields),
                 json.dumps(update.ai_fields),
                 datetime.now().isoformat()
@@ -4503,14 +4509,24 @@ async def save_mapping_update(update: MappingUpdate):
     except Exception as e:
         return {"success": False, "error": str(e)}
 
+@app.get("/mapping-update/{env_id}/{index_name}")
+async def get_mapping_update(env_id: int, index_name: str):
+    root_fields, parent_fields, relation, nested_fields, ai_fields = fetch_field_lists(env_id, index_name)
+    return {
+        "root_fields": root_fields,
+        "parent_child_fields": parent_fields,
+        "parent_child_relation": relation,
+        "nested_fields": nested_fields,
+        "ai_fields": ai_fields,
+    }
 SELECT_SQL = """
-             SELECT root_fields, parent_child_fields, nested_fields, ai_fields
+             SELECT root_fields, parent_child_fields, parent_child_relation, nested_fields, ai_fields
              FROM mapping_updates
              WHERE env_id = ? AND index_name = ?
                  LIMIT 1; \
              """
 
-def fetch_field_lists(env_id: int,index_name: str) -> Tuple[List[str], List[str], List[str], List[str]]:
+def fetch_field_lists(env_id: int,index_name: str) -> Tuple[List[str], List[str], Optional[str], List[str], List[str]]:
 
     with sqlite3.connect('workflow_mappings.db') as conn:
         cur = conn.cursor()
@@ -4519,14 +4535,15 @@ def fetch_field_lists(env_id: int,index_name: str) -> Tuple[List[str], List[str]
 
     if not row:
         # Nothing saved yet
-        return [], [], [], []
+        return [], [], None, [], []
 
-    root_fields_raw, parent_child_fields_raw, nested_fields_raw, ai_fields_raw = row
+    root_fields_raw, parent_child_fields_raw, relation_raw, nested_fields_raw, ai_fields_raw = row
     root_field_list = _extract_list(root_fields_raw)
     parent_field_list = _extract_list(parent_child_fields_raw)
+    relation = relation_raw if relation_raw else None
     nested_field_list = _extract_list(nested_fields_raw)
     ai_field_list = _extract_list(ai_fields_raw)
-    return root_field_list, parent_field_list, nested_field_list, ai_field_list
+    return root_field_list, parent_field_list, relation, nested_field_list, ai_field_list
 
 def _extract_list(value: Any) -> List[str]:
     """
