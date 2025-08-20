@@ -9180,20 +9180,22 @@ function previewMappingUpdate() {
     const aiFields = Array.from(document.getElementById('updateAIFields').selectedOptions).map(o => o.value);
     const relation = document.getElementById('updateRelations').value;
 
-    const tbody = document.querySelector('#mappingConfigTable tbody');
-    if (!tbody) return;
     const root = rootFields.length ? rootFields.join(', ') : '-';
     const nested = nestedFields.length ? nestedFields.join(', ') : '-';
     const relationText = relation || '-';
     const parent = parentFields.length ? parentFields.join(', ') : '-';
     const ai = aiFields.length ? aiFields.join(', ') : '-';
-    tbody.innerHTML = `
+    const rows = `
         <tr><th>Root Fields</th><td>${root}</td></tr>
         <tr><th>Nested Fields</th><td>${nested}</td></tr>
         <tr><th>Parent-Child Relation</th><td>${relationText}</td></tr>
         <tr><th>Parent-Child Fields</th><td>${parent}</td></tr>
         <tr><th>AI Fields</th><td>${ai}</td></tr>
     `;
+    const modalTbody = document.querySelector('#updateMappingPreview tbody');
+    if (modalTbody) modalTbody.innerHTML = rows;
+    const pageTbody = document.querySelector('#mappingConfigTable tbody');
+    if (pageTbody) pageTbody.innerHTML = rows;
 }
 
 window.previewMappingUpdate = previewMappingUpdate;
